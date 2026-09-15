@@ -178,5 +178,52 @@ module MailersendRails
         DeliveryMethod.new(endpoint: "http://127.0.0.1:1/v1/email").deliver!(mail)
       end
     end
+
+    # Tracking rewrites every link to a redirector on MailerSend's domain, which for a
+    # message carrying a credential hands the token to a third party and breaks the
+    # Universal Link that would have opened the sender's own app.
+    def test_carries_per_message_tracking_settings
+      mail = build_mail
+      mail["X-MailerSend-Track-Clicks"] = "false"
+
+      captured = with_api { |endpoint| deliver(mail, endpoint) }
+
+      assert_equal({ "track_clicks" => false }, JSON.parse(captured[:body])["settings"])
+    end
+
+    def test_carries_every_tracking_switch_it_is_given
+      mail = build_mail
+      mail["X-MailerSend-Track-Clicks"] = "false"
+      mail["X-MailerSend-Track-Opens"] = "FALSE"
+      mail["X-MailerSend-Track-Content"] = "true"
+
+      captured = with_api { |endpoint| deliver(mail, endpoint) }
+
+      assert_equal({ "track_clicks" => false, "track_opens" => false, "track_content" => true },
+                   JSON.parse(captured[:body])["settings"])
+    end
+
+    # Absent means absent: MailerSend falls back to the domain's own setting, and a message
+    # that says nothing should keep whatever the account is configured for.
+    def test_omits_settings_when_no_message_asks_for_any
+      captured = with_api { |endpoint| deliver(build_mail, endpoint) }
+
+      refute JSON.parse(captured[:body]).key?("settings")
+    end
+
+    # Loudly, for the same reason a failed delivery is loud: the caller that asked for
+    # tracking off is usually sending a credential, and the failure mode of guessing is a
+    # token quietly routed through a redirector.
+    def test_refuses_a_tracking_value_it_cannot_read
+      mail = build_mail
+      mail["X-MailerSend-Track-Clicks"] = "off"
+
+      # No server: the payload is refused before anything is sent.
+      error = assert_raises(DeliveryMethod::DeliveryError) do
+        deliver(mail, "http://127.0.0.1:1/v1/email")
+      end
+
+      assert_match(/X-MailerSend-Track-Clicks/, error.message)
+    end
   end
 end

@@ -80,6 +80,40 @@ fields rather than a MIME message, and these are the two worth translating. Both
 are paid-plan only at MailerSend, which answers a free account carrying them with
 a 422 — loudly, rather than with an unthreaded reply nobody can account for.
 
+## Link and open tracking
+
+MailerSend can rewrite every link in a message to a redirector on its own domain. For
+marketing mail that is the point. For a message carrying a credential it is two problems at
+once: the token is handed to a third party and kept in their click reporting, and the
+rewritten URL is no longer yours — so an iOS Universal Link stops matching your
+`apple-app-site-association` and opens a browser instead of your app. For a single-use
+sign-in link that means it is spent somewhere the app cannot see it.
+
+Set the switches per message, on the mailer that needs them:
+
+```ruby
+class SessionMailer < ApplicationMailer
+  def sign_in(user)
+    headers["X-MailerSend-Track-Clicks"] = "false"
+    mail to: user.email, subject: "Your sign-in link"
+  end
+end
+```
+
+| Header | MailerSend field |
+|---|---|
+| `X-MailerSend-Track-Clicks` | `settings.track_clicks` |
+| `X-MailerSend-Track-Opens` | `settings.track_opens` |
+| `X-MailerSend-Track-Content` | `settings.track_content` |
+
+Each takes `"true"` or `"false"`, case-insensitively. A message that sets none says nothing
+about tracking, and MailerSend falls back to the domain's own setting — so this changes
+nothing for the mail you already send.
+
+A value that is neither raises, rather than being quietly dropped. The caller asking for
+tracking off is usually sending a credential, and the failure mode of guessing is a token
+routed through a redirector without anybody noticing.
+
 ## Inbound mail
 
 Optional, and only loads when the app has Action Mailbox. MailerSend posts the

@@ -29,6 +29,24 @@ module MailersendRails
     OPEN_TIMEOUT = 15
     READ_TIMEOUT = 30
 
+    # MailerSend's per-message tracking switches, and the header each is set from.
+    #
+    # Tracking rewrites every link in the message to a redirector on MailerSend's
+    # domain. For marketing mail that is the point. For a message carrying a
+    # credential it is two problems: the token is handed to a third party and
+    # logged in their click reporting, and the rewritten URL is no longer yours --
+    # so an iOS Universal Link stops matching your apple-app-site-association and
+    # opens a browser instead of your app, which for a single-use sign-in link
+    # means it is spent somewhere the app cannot see.
+    #
+    # Absent means absent: MailerSend falls back to the domain's own setting, so a
+    # message that says nothing keeps whatever the account is configured for.
+    TRACKING = {
+      "track_clicks" => "X-MailerSend-Track-Clicks",
+      "track_opens" => "X-MailerSend-Track-Opens",
+      "track_content" => "X-MailerSend-Track-Content"
+    }.freeze
+
     attr_reader :settings
 
     def initialize(settings = {})
@@ -57,8 +75,30 @@ module MailersendRails
           "text" => mail.text_part&.body&.decoded,
           "html" => html_for(mail),
           "in_reply_to" => message_ids_in(mail[:in_reply_to]).first,
-          "references" => message_ids_in(mail[:references])
+          "references" => message_ids_in(mail[:references]),
+          "settings" => tracking_in(mail)
         }.reject { |_, value| omit?(value) }
+      end
+
+      # The tracking switches this message sets, if any. See TRACKING.
+      #
+      # A value that is neither "true" nor "false" raises rather than being
+      # dropped, for the same reason a failed delivery raises: the caller that
+      # asked for tracking off is usually sending a credential, and the failure
+      # mode of guessing is a token quietly routed through a redirector. A typo
+      # here is a mistake in the sender's own code and shows up the first time
+      # that mailer is exercised.
+      def tracking_in(mail)
+        TRACKING.each_with_object({}) do |(field, header), settings|
+          raw = mail[header]&.to_s&.strip
+          next if raw.nil? || raw.empty?
+
+          case raw.downcase
+          when "true" then settings[field] = true
+          when "false" then settings[field] = false
+          else raise DeliveryError, "#{header} must be \"true\" or \"false\", got #{raw.inspect}"
+          end
+        end
       end
 
       # In-Reply-To and References, in the form MailerSend asks for them.
