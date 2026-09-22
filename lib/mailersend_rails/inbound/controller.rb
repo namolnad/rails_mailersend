@@ -18,11 +18,21 @@ module MailersendRails
     #
     #   post "inbound/mailersend" => "inbound/mailersend#create"
     #
-    # Deliberately an ActionController::Base rather than the app's own base class:
-    # an ingress has no session, no tenancy and no browser, and a modern-browser
-    # gate would answer a webhook with 406.
-    class Controller < ActionController::Base
-      skip_forgery_protection
+    # Deliberately not the app's own base class: an ingress has no session, no
+    # tenancy and no browser, and a modern-browser gate would answer a webhook
+    # with 406.
+    #
+    # And deliberately not ActionController::Base either, but Metal. Base's
+    # instrumentation parses the body into params before any callback runs and
+    # writes them to the request log -- which here is every message that
+    # arrived, whole, in `data.raw`, including the ones refused for a forged
+    # signature, since anybody can post one. Nothing below reads `params`: the
+    # signature has to be checked against the raw bytes anyway. So on Metal the
+    # body is never parsed and there is nothing to log. What that costs is the
+    # "Processing by" and "Completed" lines, so what happened to each post is
+    # logged here instead, with nothing from the message in it.
+    class Controller < ActionController::Metal
+      include AbstractController::Callbacks
 
       # Order matters. The validation ping is answered before the secret is
       # required, because the two deadlock otherwise -- see answer_validation_ping.
@@ -36,9 +46,14 @@ module MailersendRails
 
         # Rescues RecordNotUnique internally and returns nil, so a retried webhook
         # is already a no-op here.
-        ActionMailbox::InboundEmail.create_and_extract_message_id!(
+        inbound_email = ActionMailbox::InboundEmail.create_and_extract_message_id!(
           payload.message_with_transport_headers
         )
+        if inbound_email
+          log(:info, "stored inbound email #{inbound_email.id}")
+        else
+          log(:info, "already had that message; ignored the repeat")
+        end
 
         head :no_content
       end
@@ -94,6 +109,14 @@ module MailersendRails
 
         def log(level, message)
           Rails.logger.public_send(level, "[#{MailersendRails.config.log_tag}] #{message}")
+        end
+
+        # A status and nothing else, which is all MailerSend reads. Not
+        # ActionController::Head, which picks a content type from the view
+        # layer's formats, and Metal has no view layer.
+        def head(status)
+          self.status = status
+          self.response_body = ""
         end
     end
   end

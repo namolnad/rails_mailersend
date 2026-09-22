@@ -133,7 +133,7 @@ post "inbound/mailersend" => "inbound/mailersend#create"
 Point a MailerSend inbound route at that URL and put the route's secret in
 `mailersend.inbound_secret`.
 
-Five things it handles that are easy to get wrong:
+Six things it handles that are easy to get wrong:
 
 **The validation ping is answered before the secret is checked.** A route's secret
 is generated when the route is saved, so there is no secret to configure until the
@@ -166,6 +166,17 @@ supposed to judge them, or an `X-Original-To` naming somewhere the message was
 never delivered. The whole prefix is reserved, and so is `X-Original-To`. A
 message carrying none of them is passed through byte for byte.
 
+**Nothing from the message reaches the log.** An `ActionController::Base`
+parses a JSON body into params before any callback runs and writes them to the
+request log, which here would be every message that arrived, whole — the ones
+refused for a forged signature included, since anybody can post one. The ingress
+is an `ActionController::Metal` instead: nothing reads `params`, so the body is
+never parsed and there is nothing to log. Each post still gets one line saying
+what became of it — stored, a repeat, a validation ping, or refused and why —
+with nothing from the message in it. The subclass you mount inherits all of
+this, and because it is Metal, `render`, `rescue_from` and the rest of
+`ActionController::Base` are not available in it.
+
 The signature is verified against the exact bytes MailerSend signed, before
 anything parses them; checking against a re-serialised body would verify our own
 JSON encoder rather than the sender.
@@ -176,5 +187,6 @@ JSON encoder rather than the sender.
 bundle exec rake test
 ```
 
-The parts most worth getting right — the payload guard rails and signature
-verification — are plain Ruby and tested without a Rails app.
+The parts most worth getting right — the payload guard rails, signature
+verification, and the ingress keeping mail out of the log — are tested without a
+Rails app.
