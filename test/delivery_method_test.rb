@@ -51,9 +51,12 @@ module MailersendRails
       mail.reply_to = fields[:reply_to] if fields[:reply_to]
       mail.subject = subject
 
-      if text
+      if text && html
         mail.text_part = part("text/plain; charset=UTF-8", text)
         mail.html_part = part("text/html; charset=UTF-8", html)
+      elsif text
+        mail.content_type = "text/plain; charset=UTF-8"
+        mail.body = text
       else
         mail.content_type = "text/html; charset=UTF-8"
         mail.body = html
@@ -128,6 +131,18 @@ module MailersendRails
 
       assert_equal %w[from to subject html], payload.keys
       %w[cc bcc reply_to text in_reply_to references].each { |key| refute_includes payload, key }
+    end
+
+    # Sent as `html`, a plain-text body renders as one paragraph: the client
+    # collapses its line breaks as whitespace, and the message still arrives, so
+    # nothing fails anywhere a sender would look.
+    def test_sends_a_plain_text_message_as_text_alone
+      mail = build_mail(subject: "Weekly report", html: nil, text: "Three shops.\n\n  one\n  two\n  three\n")
+
+      payload = JSON.parse(with_api { |endpoint| deliver(mail, endpoint) }[:body])
+
+      assert_equal "Three shops.\n\n  one\n  two\n  three\n", payload["text"]
+      refute_includes payload, "html"
     end
 
     # Threading is invisible until it is wrong, and then it is invisible in the

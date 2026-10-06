@@ -72,7 +72,7 @@ module MailersendRails
           "bcc" => addresses_in(mail[:bcc]),
           "reply_to" => Array(mail.reply_to).empty? ? {} : address_in(mail[:reply_to]),
           "subject" => mail.subject,
-          "text" => mail.text_part&.body&.decoded,
+          "text" => text_for(mail),
           "html" => html_for(mail),
           "in_reply_to" => message_ids_in(mail[:in_reply_to]).first,
           "references" => message_ids_in(mail[:references]),
@@ -130,8 +130,23 @@ module MailersendRails
         "<#{id}>" unless id.empty?
       end
 
+      # Each body goes in the field MailerSend will render it as.
+      #
+      # A multipart message carries its bodies as parts. A single-part message is
+      # its one body, and its own content type says which field that is: a
+      # text/plain body sent as `html` is rendered as HTML, and every line break in
+      # it collapses into one paragraph. A body that declares no type is text, as
+      # MIME has it.
+      def text_for(mail)
+        return mail.text_part&.body&.decoded if mail.multipart?
+
+        mail.body.decoded unless mail.mime_type == "text/html"
+      end
+
       def html_for(mail)
-        mail.html_part&.body&.decoded || mail.body.decoded
+        return mail.html_part&.body&.decoded if mail.multipart?
+
+        mail.body.decoded if mail.mime_type == "text/html"
       end
 
       def address_in(field)
